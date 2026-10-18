@@ -1,0 +1,443 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Учёт рабочих смен</title>
+  <style>
+    * { box-sizing: border-box; }
+
+    body {
+      margin: 0;
+      font-family: Arial, sans-serif;
+      background: #0f172a;
+      color: #f8fafc;
+    }
+
+    .container {
+      width: min(100% - 28px, 720px);
+      margin: 30px auto;
+    }
+
+    h1 { font-size: 27px; }
+    h2 { font-size: 19px; }
+
+    .muted { color: #94a3b8; }
+
+    .card {
+      background: #1e293b;
+      border: 1px solid #334155;
+      border-radius: 16px;
+      padding: 20px;
+      margin-bottom: 16px;
+    }
+
+    .stats {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 12px;
+    }
+
+    .stat {
+      background: #0f172a;
+      border-radius: 12px;
+      padding: 15px;
+      overflow-wrap: anywhere;
+    }
+
+    .stat strong {
+      display: block;
+      font-size: 23px;
+      margin-top: 9px;
+    }
+
+    label {
+      display: block;
+      margin: 14px 0 7px;
+      color: #cbd5e1;
+    }
+
+    input, button {
+      width: 100%;
+      border-radius: 10px;
+      padding: 12px;
+      font-size: 16px;
+    }
+
+    input {
+      background: #0f172a;
+      border: 1px solid #475569;
+      color: white;
+    }
+
+    button {
+      border: 0;
+      background: #38bdf8;
+      color: #082f49;
+      font-weight: bold;
+      cursor: pointer;
+      margin-top: 12px;
+    }
+
+    button.secondary {
+      background: #334155;
+      color: white;
+    }
+
+    button.danger {
+      background: #7f1d1d;
+      color: white;
+    }
+
+    .shift {
+      border-bottom: 1px solid #334155;
+      padding: 14px 0;
+    }
+
+    .shift:last-child { border-bottom: 0; }
+
+    .shift button {
+      font-size: 13px;
+      padding: 8px;
+    }
+
+    .message {
+      margin-top: 12px;
+      color: #7dd3fc;
+      line-height: 1.5;
+    }
+
+    @media (max-width: 420px) {
+      .stats { grid-template-columns: 1fr 1fr; }
+      .stat strong { font-size: 19px; }
+      .card { padding: 15px; }
+    }
+  </style>
+</head>
+<body>
+  <main class="container">
+    <h1>Мои рабочие смены</h1>
+    <p class="muted">Учёт часов и заработка · Europe/Nicosia</p>
+
+    <section class="card">
+      <h2>Статистика за месяц</h2>
+      <div class="stats">
+        <div class="stat">
+          <span class="muted">Заработок</span>
+          <strong id="earnings">€0.00</strong>
+        </div>
+        <div class="stat">
+          <span class="muted">Отработано</span>
+          <strong id="hours">0 ч</strong>
+        </div>
+        <div class="stat">
+          <span class="muted">Количество смен</span>
+          <strong id="count">0</strong>
+        </div>
+        <div class="stat">
+          <span class="muted">Текущая ставка</span>
+          <strong id="rateDisplay">€10.00</strong>
+        </div>
+      </div>
+    </section>
+
+    <section class="card">
+      <h2>Настройки ставки</h2>
+      <label for="rate">Ставка за час (€)</label>
+      <input id="rate" type="number" min="0.01" max="10000"
+             step="0.01" placeholder="Например, 12.50">
+      <button id="saveRate">Сохранить ставку</button>
+      <p id="rateMessage" class="message"></p>
+    </section>
+
+    <section class="card">
+      <h2>Записать смену</h2>
+
+      <label for="date">Дата смены</label>
+      <input id="date" type="date">
+
+      <label for="interval">Время работы</label>
+      <input id="interval" type="text"
+             placeholder="10:00-22:30">
+
+      <button id="addShift">Добавить смену</button>
+      <p id="shiftMessage" class="message"></p>
+    </section>
+
+    <section class="card">
+      <h2>История смен</h2>
+      <p class="muted">Последние смены отображаются первыми.</p>
+      <div id="history"></div>
+      <button id="resetMonth" class="secondary">
+        Исключить смены текущего месяца
+      </button>
+      <button id="clearAll" class="danger">
+        Удалить всю историю
+      </button>
+      <p id="historyMessage" class="message"></p>
+    </section>
+  </main>
+
+  <script>
+    const STORAGE_KEY = "shift_tracker_data_v1";
+
+    const defaultData = {
+      rate: "10.00",
+      shifts: []
+    };
+
+    let state = loadData();
+
+    function loadData() {
+      try {
+        const raw = localStorage.getItem(STORAGE_KEY);
+        if (!raw) return structuredClone(defaultData);
+
+        const data = JSON.parse(raw);
+
+        if (
+          !data ||
+          typeof data !== "object" ||
+          !Array.isArray(data.shifts)
+        ) {
+          return structuredClone(defaultData);
+        }
+
+        return {
+          rate: String(data.rate || "10.00"),
+          shifts: data.shifts.filter(s =>
+            s &&
+            typeof s.id === "string" &&
+            typeof s.date === "string" &&
+            typeof s.rate === "string" &&
+            typeof s.pay === "string" &&
+            Number.isFinite(s.minutes) &&
+            typeof s.excluded === "boolean"
+          )
+        };
+      } catch {
+        return structuredClone(defaultData);
+      }
+    }
+
+    function saveData() {
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+    }
+
+    function money(value) {
+      return "€" + Number(value).toFixed(2);
+    }
+
+    function getLocalDate() {
+      const parts = new Intl.DateTimeFormat("en-CA", {
+        timeZone: "Europe/Nicosia",
+        year: "numeric",
+        month: "2-digit",
+        day: "2-digit"
+      }).formatToParts(new Date());
+
+      const get = type => parts.find(p => p.type === type).value;
+      return `${get("year")}-${get("month")}-${get("day")}`;
+    }
+
+    function currentMonth() {
+      return getLocalDate().slice(0, 7);
+    }
+
+    function escapeHTML(value) {
+      return String(value).replace(/[&<>"']/g, char => ({
+        "&": "&amp;",
+        "<": "&lt;",
+        ">": "&gt;",
+        '"': "&quot;",
+        "'": "&#39;"
+      })[char]);
+    }
+
+    function render() {
+      const month = currentMonth();
+      const shifts = state.shifts.filter(s =>
+        s.date.startsWith(month) && !s.excluded
+      );
+
+      const minutes = shifts.reduce((sum, s) => sum + s.minutes, 0);
+      const earnings = shifts.reduce((sum, s) => sum + Number(s.pay), 0);
+
+      document.getElementById("earnings").textContent = money(earnings);
+      document.getElementById("hours").textContent =
+        `${Math.floor(minutes / 60)} ч ${minutes % 60} мин`;
+      document.getElementById("count").textContent = shifts.length;
+      document.getElementById("rateDisplay").textContent =
+        money(state.rate);
+      document.getElementById("rate").value = state.rate;
+
+      const history = document.getElementById("history");
+
+      if (!state.shifts.length) {
+        history.innerHTML = '<p class="muted">Пока нет записей.</p>';
+        return;
+      }
+
+      history.innerHTML = [...state.shifts]
+        .sort((a, b) =>
+          b.date.localeCompare(a.date) ||
+          b.id.localeCompare(a.id)
+        )
+        .map(s => `
+          <div class="shift">
+            <strong>${escapeHTML(s.date)}</strong>
+            <p>${escapeHTML(s.interval)}</p>
+            <p>${Math.floor(s.minutes / 60)} ч ${s.minutes % 60} мин
+              · ${money(s.pay)}</p>
+            <p class="muted">Ставка смены: ${money(s.rate)}</p>
+            ${s.excluded
+              ? '<p>Не учитывается в статистике</p>'
+              : ''}
+            <button class="secondary"
+              data-exclude="${escapeHTML(s.id)}">
+              ${s.excluded ? "Уже исключена" : "Исключить из статистики"}
+            </button>
+          </div>
+        `).join("");
+    }
+
+    document.getElementById("saveRate").addEventListener("click", () => {
+      const input = document.getElementById("rate");
+      const value = input.value.trim().replace(",", ".");
+      const rate = Number(value);
+
+      if (!value || !Number.isFinite(rate) ||
+          rate <= 0 || rate > 10000) {
+        document.getElementById("rateMessage").textContent =
+          "Введите ставку от 0.01 до 10000.";
+        return;
+      }
+
+      state.rate = rate.toFixed(2);
+      saveData();
+      render();
+
+      document.getElementById("rateMessage").textContent =
+        "Новая ставка сохранена. Старые смены не пересчитаны.";
+    });
+
+    document.getElementById("addShift").addEventListener("click", () => {
+      const date = document.getElementById("date").value;
+      const interval = document.getElementById("interval")
+        .value.trim();
+      const match = interval.match(
+        /^([01]\d|2[0-3]):([0-5]\d)-([01]\d|2[0-3]):([0-5]\d)$/
+      );
+
+      const message = document.getElementById("shiftMessage");
+
+      if (!date || !match) {
+        message.textContent =
+          "Введите дату и время в формате 10:00-22:30.";
+        return;
+      }
+
+      const start = Number(match[1]) * 60 + Number(match[2]);
+      const end = Number(match[3]) * 60 + Number(match[4]);
+
+      let minutes = end - start;
+      if (minutes < 0) minutes += 24 * 60;
+
+      if (minutes <= 0 || minutes >= 24 * 60) {
+        message.textContent =
+          "Продолжительность смены должна быть меньше 24 часов.";
+        return;
+      }
+
+      const rate = Number(state.rate);
+      const pay = (Math.round(minutes * rate) / 60).toFixed(2);
+
+      state.shifts.push({
+        id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+        date,
+        interval,
+        minutes,
+        rate: rate.toFixed(2),
+        pay,
+        excluded: false
+      });
+
+      saveData();
+      render();
+
+      message.textContent =
+        `Смена добавлена: ${Math.floor(minutes / 60)} ч ` +
+        `${minutes % 60} мин · ${money(pay)}.`;
+
+      document.getElementById("interval").value = "";
+    });
+
+    document.getElementById("history").addEventListener("click", event => {
+      const button = event.target.closest("[data-exclude]");
+      if (!button) return;
+
+      const shift = state.shifts.find(s =>
+        s.id === button.dataset.exclude
+      );
+
+      if (!shift || shift.excluded) return;
+
+      if (!confirm(
+        `Исключить смену ${shift.date} (${shift.interval}) ` +
+        `из статистики? Запись останется в истории.`
+      )) return;
+
+      shift.excluded = true;
+      shift.excludedAt = getLocalDate();
+
+      saveData();
+      render();
+    });
+
+    document.getElementById("resetMonth").addEventListener("click", () => {
+      const month = currentMonth();
+      const candidates = state.shifts.filter(s =>
+        s.date.startsWith(month) && !s.excluded
+      );
+
+      const message = document.getElementById("historyMessage");
+
+      if (!candidates.length) {
+        message.textContent = "Нет смен для исключения за этот месяц.";
+        return;
+      }
+
+      if (!confirm(
+        `Исключить ${candidates.length} смен за ${month} из статистики? ` +
+        "Записи сохранятся в истории."
+      )) return;
+
+      candidates.forEach(s => {
+        s.excluded = true;
+        s.excludedAt = getLocalDate();
+      });
+
+      saveData();
+      render();
+      message.textContent = "Смены исключены из статистики.";
+    });
+
+    document.getElementById("clearAll").addEventListener("click", () => {
+      if (!confirm(
+        "Удалить ВСЮ историю смен без возможности восстановления?"
+      )) return;
+
+      state.shifts = [];
+      saveData();
+      render();
+
+      document.getElementById("historyMessage").textContent =
+        "История удалена.";
+    });
+
+    document.getElementById("date").value = getLocalDate();
+
+    render();
+  </script>
+</body>
+</html>
